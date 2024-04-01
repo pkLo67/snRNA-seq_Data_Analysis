@@ -1,0 +1,742 @@
+---
+title: "Case Study: Single-Nucleus RNA sequencing (snRNA-seq)"
+author: "Pang-Kuo Lo"
+date: "2024-03-31"
+output: html_document
+---
+
+
+#### Import required libraries for snRNA-seq data analysis
+```{r}
+library(Seurat)
+library(limma)
+library(readr)
+library(ggplot2)
+library(dplyr)
+library(reshape2)
+library(tibble)
+library(pheatmap)
+library(clusterProfiler)
+library(enrichplot)
+```
+
+
+
+#### Import cell metadata into the R workplace
+```{r}
+# Read cell_metadata.tsv file
+metadata <- read.delim("./metadata/cell_metadata.tsv")
+
+# Make the Barcode as the row names of the metadata
+row.names(metadata) <- metadata$Barcode
+
+# Remove the Barcode column
+metadata$Barcode <- NULL
+
+# Check the dimension of the metadata data frame
+dim(metadata)
+```
+
+#### Import the snRNA-seq data into the R workplace
+Place barcodes.tsv, genes.tsv, matrix.mtx files within the directory "snRNA-seq"
+```{r}
+# Use Read10X() to load snRNA-seq and use the second column of genes.tsv as gene features
+data <- Read10X(data.dir="snRNA-seq", gene.column = 2)
+
+# Create Seurat object and include the metadata in the Seurat object
+sobj <- CreateSeuratObject(counts = data, meta.data = metadata, min.features = 200)
+sobj
+```
+
+
+```{r}
+# Check the cell numbers for each sample type
+table(sobj$orig.ident)
+```
+
+
+```{r}
+# Compute the percentage of mitochondrial RNA in each cell
+# The [[ operator can add the mito data column to object metadata.
+sobj[["percent.mt"]] <- PercentageFeatureSet(sobj, pattern = "^MT-")
+```
+
+
+#### Perform QC check to examine the quality of snRNA-seq data
+```{r fig.height=4, fig.width=10}
+# View snRNA-seq data QC using VlnPlot()
+VlnPlot(sobj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+ggsave("VlnPlot_QC_check.png", width = 10, height = 4, units = "in", dpi = 600)
+```
+
+
+#### Processing the snRNA-seq
+```{r}
+# Subset the snRNA-seq data to remove cells with abnormal high RNA feature counts and mitochondrial RNA percents
+sobj1 <- subset(sobj, subset = nFeature_RNA <= 5000)
+sobj1 <- subset(sobj1, subset = percent.mt <= 25)
+```
+
+
+
+#### Recheck the processed snRNA-seq data
+```{r fig.height=4, fig.width=10}
+# View the data QC using VlnPlot()
+VlnPlot(sobj1, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+ggsave("VlnPlot_QC_after_processing.png", width = 10, height = 4, units = "in", dpi = 600)
+```
+
+
+```{r}
+# Check the dimension of processed Seurat object
+sobj1
+```
+
+
+
+#### Perform data normalization, FindVariableFeatures, and data scaling
+```{r}
+# snRNA-seq data normalization
+sobj2 <- sobj1
+sobj2 <- NormalizeData(sobj2, verbose = FALSE)
+
+# Perform FindVariableFeatures
+sobj2 <- FindVariableFeatures(sobj2, selection.method = "vst", nfeatures = 2000)
+
+# Perform snRNA-seq data scaling
+all.genes <- rownames(sobj2)
+sobj2 <- ScaleData(sobj2, features = all.genes)
+```
+
+
+
+#### Run PCA linear dimensionality reduction
+```{r}
+sobj2 <- RunPCA(sobj2, features = VariableFeatures(object = sobj2))
+```
+
+
+```{r fig.height=3, fig.width=12}
+# Perform PCA plot analysis
+PCAPlot(sobj2, split.by = "orig.ident", pt.size = 0.8)
+ggsave("PCA_plots_by_sample_id.png", width = 12, height = 3, units = "in", dpi = 600)
+```
+
+
+#### Perform ElbowPlot analysis
+```{r fig.height=4, fig.width=5}
+ElbowPlot(sobj2)
+```
+
+
+
+
+#### Perform cell clustering
+```{r}
+sobj2 <- FindNeighbors(sobj2, dims = 1:10)
+sobj2 <- FindClusters(sobj2, resolution = 0.5)
+```
+
+
+#### Perform UMAP (Uniform Manifold Approximation and Projection)
+```{r}
+sobj2 <- RunUMAP(sobj2, dims = 1:10)
+```
+
+
+
+#### Perform tSNE (T-distributed Stochastic Neighbourhood Embedding)
+```{r}
+sobj2 <- RunTSNE(sobj2, reduction = "pca", dims = 1:10)
+```
+
+
+
+#### Rename the cell cluster labels
+```{r}
+sobj2 <- RenameIdents(sobj2, `0` = "C1", `1` = "C2", `2` = "C3", `3` = "C4", `4` = "C5", `5` = "C6", `6` = "C7",
+                        `7` = "C8", `8` = "C9", `9` = "C10", `10` = "C11", `11` = "C12", `12` = "C13", `13` = "C14", 
+                        `14` = "C15", `15` = "C16", `16` = "C17", `17` = "C18", `18` = "C19", `19` = "C20", `20` = "C21",
+                        `21` = "C22", `22` = "C23")
+```
+
+
+
+
+#### Perform UMAP plot analysis for different sample types
+```{r fig.height=3.5, fig.width=12}
+# Perform UMAP plot analysis for different sample types
+DimPlot(sobj2, reduction = "umap", split.by = "orig.ident", label = T, label.size = 2.5)
+ggsave("UMAP_plots_by_sample_id.png", width = 12, height = 3.5, units = "in", dpi = 600)
+```
+
+
+
+#### Perform UMAP plot analysis for different health types
+```{r fig.height=3.5, fig.width=7}
+# Perform UMAP plot analysis for different health types
+DimPlot(sobj2, reduction = "umap", split.by = "Health", label = T, label.size = 3)
+ggsave("UMAP_plots_by_health.png", width = 7, height = 3.5, units = "in", dpi = 600)
+```
+
+
+
+#### Perform UMAP plot analysis for different health types
+```{r fig.height=3.5, fig.width=7}
+# Perform UMAP plot analysis for different health types
+DimPlot(sobj2, reduction = "umap", split.by = "Health")
+ggsave("UMAP_plots_by_health_no_labels.png", width = 7, height = 3.5, units = "in", dpi = 600)
+```
+
+
+
+
+
+#### Perform tSNE plot analysis for different sample types
+```{r fig.height=3.5, fig.width=12}
+# Perform tSNE plot analysis for different sample types
+TSNEPlot(sobj2, split.by = "orig.ident", label = T, pt.size = 0.1, label.size = 2.5)
+ggsave("tSNE_plots_by_sample_id.png", width = 12, height = 3.5, units = "in", dpi = 600)
+```
+
+
+#### Perform tSNE plot analysis for different health types
+```{r fig.height=3, fig.width=6.5}
+# Perform tSNE plot analysis for different health types
+TSNEPlot(sobj2, split.by = "Health", label = T, pt.size = 0.1, label.size = 2.5)
+ggsave("tSNE_plots_by_health.png", width = 6.5, height = 3, units = "in", dpi = 600)
+```
+
+
+
+
+#### Perform tSNE plot analysis for different health types
+```{r fig.height=3, fig.width=6.5}
+# Perform tSNE plot analysis for different health types without cluster labels
+TSNEPlot(sobj2, split.by = "Health", pt.size = 0.1)
+ggsave("tSNE_plots_by_health_no_label.png", width = 6.5, height = 3, units = "in", dpi = 600)
+```
+
+
+
+
+
+#### Analysis of the cell number of each cell cluster based on the health type
+```{r}
+he_tu_pair <- data.frame(table(sobj2$seurat_clusters, sobj2$Health))
+he_tu_pair2 <- cbind(he_tu_pair[1:23, c(1,3)], he_tu_pair[24:46, 3])
+
+colnames(he_tu_pair) <- c("Cluster_ID", "Sample_type", "Cell_no")
+he_tu_pair <- he_tu_pair %>% mutate(Cluster_ID = paste0("C", as.numeric(Cluster_ID)))
+he_tu_pair$Cluster_ID <- factor(he_tu_pair$Cluster_ID, levels = paste0("C", 1:23))
+
+colnames(he_tu_pair2) <- c("Cluster_ID", "Healthy", "Tumor")
+he_tu_pair2 <- he_tu_pair2 %>% mutate(Cluster_ID = paste0("C", as.numeric(Cluster_ID)))
+he_tu_pair2$Cluster_ID <- factor(he_tu_pair2$Cluster_ID, levels = paste0("C", 1:23))
+
+# View the short data frame
+he_tu_pair2
+```
+
+
+
+
+#### Barplot analysis of cell clusters based on the health type
+```{r fig.height=5, fig.width=10}
+he_tu_pair %>% ggplot(aes(Cluster_ID, Cell_no, fill = Sample_type)) + geom_bar(stat = "identity", position = position_dodge())
+ggsave("barplot_clusters_by_health.png", width = 10, height = 5, units = "in", dpi = 600)
+```
+
+
+#### Analysis of the cell number of each cell cluster based on the sample type
+```{r}
+df_id <- data.frame(table(sobj2$seurat_clusters, sobj2$orig.ident))
+colnames(df_id) <- c("Cluster_ID", "Sample_ID", "Cell_no")
+df_id <- df_id %>% mutate(Cluster_ID = paste0("C", as.numeric(Cluster_ID)))
+df_id$Cluster_ID <- factor(df_id$Cluster_ID, levels = paste0("C", 1:23))
+
+df_id2 <- cbind(df_id[1:23, c(1, 3)], df_id[47:69, 3], df_id[24:46, 3], df_id[70:92, 3])
+colnames(df_id2) <- c("Cluster_ID", "Healthy_1", "Healthy_2", "Tumor_1", "Tumor_2")
+df_id2 <- df_id2 %>% mutate(Cluster_ID = paste0("C", as.numeric(Cluster_ID)))
+df_id2$Cluster_ID <- factor(df_id2$Cluster_ID, levels = paste0("C", 1:23))
+
+# View the short data frame
+df_id2
+```
+
+
+#### Heatmap analysis of the cell numbers of clusters based on sample types
+```{r fig.height=4, fig.width=7}
+df_id %>% ggplot(aes(Sample_ID, Cluster_ID, fill = log2(Cell_no))) + geom_tile() +
+          scale_fill_gradient(high = "red", low = "white")
+ggsave("Heatmap_cell_no_by_sample_id.png", width = 7, height = 4, units = "in", dpi = 600)
+```
+
+
+
+#### Analysis of expression of gene markers for M1 macrophages on the UMAP plot
+```{r fig.height=19, fig.width=5}
+# Gene markers for M1 Macrophages: IL1A, IL1B, IL6, NOS2, TLR2, TLR4, CD80, CD86, SOCS3, CD68, MARCO, CSF2, TNF, CXCL2, IFNG, IL1R1
+genes <- c( "IL1A", "IL1B", "IL6", "NOS2", "TLR2", "TLR4", "CD80", "CD86")
+#genes <- c("SOCS3", "CD68", "MARCO", "CSF2", "TNF", "CXCL2", "IFNG", "IL1R1")
+FeaturePlot(sobj2, reduction = "umap", features = genes, split.by = "Health", max.cutoff = 3, cols = c("grey", "red"))
+ggsave("gene_markers_M1_Macrophages_1_UMAP.png", width = 5, height = 19, units = "in", dpi =  600)
+```
+
+
+
+
+```{r fig.height=19, fig.width=5}
+# Gene markers for M1 Macrophages: IL1A, IL1B, IL6, NOS2, TLR2, TLR4, CD80, CD86, SOCS3, CD68, MARCO, CSF2, TNF, CXCL2, IFNG, IL1R1
+#genes <- c( "IL1A", "IL1B", "IL6", "NOS2", "TLR2", "TLR4", "CD80", "CD86")
+genes <- c("SOCS3", "CD68", "MARCO", "CSF2", "TNF", "CXCL2", "IFNG", "IL1R1")
+FeaturePlot(sobj2, reduction = "umap", features = genes, split.by = "Health", max.cutoff = 3, cols = c("grey", "red"))
+#ggsave("gene_markers_M1_Macrophages_2_UMAP.png", width = 5, height = 19, units = "in", dpi =  600)
+```
+
+#### Analysis of expression of gene markers for M2 macrophages on the UMAP plot
+```{r fig.height=16.5, fig.width=5}
+# Gene markers for M2 Macrophages: CSF1R, MRC1, PPARG, ARG1, CD163, CLEC10A, CLEC7A, PDCD1LG2, CCL22, FCGR1A, IL4, IRF4, PDGFB, STAT6
+genes <- c("CSF1R", "MRC1", "PPARG", "ARG1", "CD163", "CLEC10A", "CLEC7A")
+#genes <- c("PDCD1LG2", "CCL22", "FCGR1A", "IL4", "IRF4", "PDGFB", "STAT6")
+FeaturePlot(sobj2, reduction = "umap", features = genes, split.by = "Health", max.cutoff = 3, cols = c("grey", "red"))
+ggsave("gene_markers_M2_Macrophages_1_UMAP.png", width = 5, height = 16.5, units = "in", dpi =  600)
+```
+
+
+
+```{r fig.height=16.5, fig.width=5}
+# Gene markers for M2 Macrophages: CSF1R, MRC1, PPARG, ARG1, CD163, CLEC10A, CLEC7A, PDCD1LG2, CCL22, FCGR1A, IL4, IRF4, PDGFB, STAT6
+#genes <- c("CSF1R", "MRC1", "PPARG", "ARG1", "CD163", "CLEC10A", "CLEC7A")
+genes <- c("PDCD1LG2", "CCL22", "FCGR1A", "IL4", "IRF4", "PDGFB", "STAT6")
+FeaturePlot(sobj2, reduction = "umap", features = genes, split.by = "Health", max.cutoff = 3, cols = c("grey", "red"))
+ggsave("gene_markers_M2_Macrophages_2_UMAP.png", width = 5, height = 16.5, units = "in", dpi =  600)
+```
+
+
+#### Analysis of expression of published gene markers for tumor-associated macrophages on the UMAP plot
+```{r fig.height=24, fig.width=5}
+# Gene markers for Tumor-associated Macrophages: CCR2, CSF1R, MARCO, PDCD1LG2, CD40, CCL2, CSF1, FCGR3A, PDGFB, TLR7
+genes <- c("CCR2", "CSF1R", "MARCO", "PDCD1LG2", "CD40", "CCL2", "CSF1", "FCGR3A", "PDGFB", "TLR7")
+FeaturePlot(sobj2, reduction = "umap", features = genes, split.by = "Health", max.cutoff = 3, cols = c("grey", "red"))
+ggsave("gene_markers_Tumor-Associated_Macrophages_UMAP.png", width = 5, height = 24, units = "in", dpi =  600)
+```
+
+
+#### Analysis of expression of pan gene markers for macrophages on the UMAP plot
+```{r fig.height=24, fig.width=5}
+# Pan gene markers for Macrophages: ADGRE1, CD14, CD68, CSF1R, CX3CR1, FCGR1A, ITGAM, MERTK, CCR5, MSR1
+genes <- c("ADGRE1", "CD14", "CD68", "CSF1R", "CX3CR1", "FCGR1A", "ITGAM", "MERTK", "CCR5", "MSR1")
+FeaturePlot(sobj2, reduction = "umap", features = genes, split.by = "Health", max.cutoff = 3, cols = c("grey", "red"))
+ggsave("Pan_gene_markers_Macrophages_UMAP.png", width = 5, height = 24, units = "in", dpi =  600)
+```
+
+
+
+#### Analysis of expression of Macrophage gene markers using VlnPlot
+```{r fig.height=12, fig.width=5}
+# Set gene marker list for M1 Macrophages
+cell_type_markers <- c("CD68", "CD86", "MARCO", "TLR4")
+                       
+# Visualization of cell-type-specific gene markers in VlnPlots
+VlnPlot(sobj2, idents = c("C3", "C8", "C10"), features = cell_type_markers, slot = "counts", split.by = "Health", log = TRUE, ncol = 1, pt.size = 0.7)
+ggsave("gene_markers_M1_Macrophages_VlnPlot.png", width = 5, height = 12, units = "in", dpi =  600)
+```
+
+
+```{r fig.height=15, fig.width=5}
+# Set gene marker list for M2 Macrophages
+cell_type_markers <- c("CD163", "CLEC7A", "MRC1", "PPARG", "FCGR3A")
+                       
+# Visualization of cell-type-specific gene markers in VlnPlots
+VlnPlot(sobj2, idents = c("C3", "C8", "C10"), features = cell_type_markers, slot = "counts", split.by = "Health", log = TRUE, ncol = 1, pt.size = 0.7)
+ggsave("gene_markers_M2_Macrophages_VlnPlot.png", width = 5, height = 15, units = "in", dpi =  600)
+```
+
+
+```{r fig.height=12, fig.width=5}
+# Set pan gene marker list for Macrophages
+cell_type_markers <- c("CSF1R", "ITGAM", "MERTK", "MSR1")
+                       
+# Visualization of cell-type-specific gene markers in VlnPlots
+VlnPlot(sobj2, idents = c("C3", "C8", "C10"), features = cell_type_markers, slot = "counts", split.by = "Health", log = TRUE, ncol = 1, pt.size = 0.7)
+ggsave("Pan_gene_markers_Macrophages_VlnPlot.png", width = 5, height = 12, units = "in", dpi =  600)
+```
+
+
+
+
+
+
+
+
+#### Subclassify each cell cluster into healthy and tumor subgroups
+```{r}
+# Subclassify each cell cluster into healthy and tumor subgroups
+sobj3 <- sobj2
+sobj3$ident.type <- paste(Idents(sobj3), sobj3$Health, sep = "_")
+sobj3$ident.copy <- Idents(sobj3)
+Idents(sobj3) <- "ident.type"
+```
+
+
+```{r}
+table(Idents(sobj3))
+```
+
+
+#### Perform differentially expressed gene (DEG) analysis of macrophages
+The C8_healthy cluster is normal macrophages.
+The C3_tumor and C10_tumor cluster is tumor-associated macrophages.
+```{r}
+# Lung tumor cell clusters vs. healthy alveolar epithelial cell clusters 
+C3_DEG <- FindMarkers(sobj3, ident.1 = "C3_tumor", ident.2 = "C8_healthy", verbose = FALSE)
+C10_DEG <- FindMarkers(sobj3, ident.1 = "C10_tumor", ident.2 = "C8_healthy", verbose = FALSE)
+```
+
+
+
+
+#### Import the metadata of genes into the R workplace
+```{r}
+genes_metadata <- read.delim("./metadata/genes_metadata.tsv")
+dim(genes_metadata)
+```
+
+
+#### Create a function to sort the DEG data, annotate the data with metadata, and write the final data to csv
+```{r}
+DEG_sort_annotate <- function(DEG, cluster_id) {
+  DEG.sorted <- DEG %>% arrange(desc(avg_log2FC)) %>% .[, c(2, 1, 5)] %>% rownames_to_column(var = "gene_name") %>%
+                   left_join(genes_metadata, by = "gene_name")
+  write.csv(DEG.sorted, paste0(cluster_id, "_DEG_data.csv"))
+  return(DEG.sorted)
+}
+```
+
+
+
+#### Apply the function to DEG datasets
+```{r}
+C3_DEG.sorted <- DEG_sort_annotate(C3_DEG, "C3")
+C10_DEG.sorted <- DEG_sort_annotate(C10_DEG, "C10")
+```
+
+
+
+
+
+#### Analysis of the number of differentially expressed genes in each DEG dataset
+```{r}
+nrow(C3_DEG.sorted)
+nrow(C10_DEG.sorted)
+```
+
+#### Write DEG datasets into CSV files
+```{r}
+write.csv(C3_DEG.sorted, "Macrophages_T1-C3_vs_H-C8_DEG_data.csv")
+write.csv(C10_DEG.sorted, "Macrophages_T2-C10_vs_H-C8_DEG_data.csv")
+```
+
+
+
+
+
+#### Perform left_join to combine DEG datasets
+```{r}
+exp_df <- data.frame(gene_name = genes_metadata$gene_name) %>% left_join(C3_DEG.sorted[,1:2], by = "gene_name") %>%
+          left_join(C10_DEG.sorted[,1:2], by = "gene_name") 
+colnames(exp_df) <- c("gene_name", "tumor_1_C3", "tumor_2_C10")
+head(exp_df, 10)
+```
+
+
+#### Processing of the combined DEG dataset
+```{r}
+exp_df2 <- na.omit(exp_df) %>% arrange(gene_name)
+rownames(exp_df2) <- exp_df2$gene_name
+exp_df2 <- exp_df2[, 2:3]
+exp_df3 <- t(exp_df2)
+dim(exp_df2)
+dim(exp_df3)
+```
+
+
+#### Select the differentially expressed genes with folds >= 1.5
+```{r}
+exp_df2_selected <- exp_df2 %>% filter((tumor_1_C3 >= 1.5 & tumor_2_C10 >= 1.5) | (tumor_1_C3 <= -1.5 & tumor_2_C10 <= -1.5))
+dim(exp_df2_selected)
+```
+
+
+
+
+#### Heatmap analysis of the combined DEG dataset with hierarchical clustering
+```{r fig.height=6, fig.width=3}
+pheatmap(exp_df2_selected, fontsize_row = 8, fontsize_col = 15)
+```
+
+#### Save the heatmap to the png file
+```{r}
+# Save the heatmap data to the png file
+png("Macrophages_DEG_Heatmap.png", width = 3, height = 6, units = "in", res = 600)
+pheatmap(exp_df2_selected, fontsize_row = 8, fontsize_col = 15)
+dev.off()
+```
+
+
+
+#### Annotate the DEG dataset with the metadata of genes
+```{r}
+exp_df2_selected_2 <- exp_df2 %>% filter((tumor_1_C3 >= 1 & tumor_2_C10 >= 1) | (tumor_1_C3 <= -1 & tumor_2_C10 <= -1))
+exp_df2_annot <- exp_df2_selected_2 %>% rownames_to_column(var = "gene_name") %>% left_join(genes_metadata, by = "gene_name") %>%
+                 arrange(desc(tumor_1_C3), desc(tumor_2_C10))
+table(exp_df2_annot$gene_biotype)
+write.csv(exp_df2_annot, "Full_DEG_data_Macrophages_annotated.csv")
+```
+
+#### Subset the lncRNA DEG dataset
+```{r}
+lncRNA_df <- exp_df2_annot %>% filter(gene_biotype == "lncRNA")
+rownames(lncRNA_df) <- lncRNA_df$gene_name
+lncRNA_df <- lncRNA_df[, 2:3]
+lncRNA_df
+```
+
+
+#### Heatmap analysis of lncRNA DEG dataset with hierarchical clustering
+```{r fig.height=4, fig.width=3}
+pheatmap(lncRNA_df, fontsize_row = 8, fontsize_col = 15)
+```
+
+#### Save the heatmap of lncRNA DEG to the png file
+```{r}
+png("Heatmap_Macrophages_lncRNA.png", width = 3, height = 4, units = "in", res = 600)
+pheatmap(lncRNA_df, fontsize_row = 8, fontsize_col = 15)
+dev.off()
+```
+
+#### Subset the protein-coding DEG dataset
+```{r}
+protein_df <- exp_df2_annot %>% filter(gene_biotype == "protein_coding")
+rownames(protein_df) <- protein_df$gene_name
+protein_df <- protein_df[, 2:3]
+protein_df
+```
+
+
+#### Heatmap analysis of protein-coding DEG dataset with hierarchical clustering
+```{r fig.height=19, fig.width=3}
+pheatmap(protein_df, fontsize_row = 7, fontsize_col = 15)
+```
+
+
+#### Save the heatmap of protein-coding DEG to the png file
+```{r}
+png("Heatmap_Macrophages_protein.png", width = 3, height = 19, units = "in", res = 600)
+pheatmap(protein_df, fontsize_row = 7, fontsize_col = 15)
+dev.off()
+```
+
+
+#### Gene Set Enrichment Analysis with ClusterProfiler
+```{r}
+# SET THE DESIRED ORGANISM HERE
+organism = "org.Hs.eg.db"
+library(organism, character.only = TRUE)
+```
+
+
+
+#### Create gene set enrichment function to generate a gse object
+```{r}
+gene_set_enrichment <- function(df, col_name) {
+  original_gene_list <- df[, col_name]
+  names(original_gene_list) <- df$gene_id
+  gene_list <- sort(original_gene_list, decreasing = TRUE)
+  gene_list <- gene_list[gene_list >= 1 | gene_list <= -1]
+  gse <- gseGO(geneList=gene_list, 
+             ont ="ALL", 
+             keyType = "ENSEMBL", 
+             nPerm = 10000, 
+             minGSSize = 3, 
+             maxGSSize = 800, 
+             pvalueCutoff = 0.05, 
+             verbose = FALSE, 
+             OrgDb = organism, 
+             pAdjustMethod = "none")
+  
+  return(gse)
+}
+
+```
+
+
+
+
+
+```{r}
+exp_df2_annot2 <- exp_df2 %>% rownames_to_column(var = "gene_name") %>% left_join(genes_metadata, by = "gene_name") 
+table(exp_df2_annot2$gene_biotype)
+```
+
+
+#### Use the gene_set_enrichment() function to create the gse object
+```{r}
+gse_C3 <- gene_set_enrichment(exp_df2_annot2, "tumor_1_C3")
+gse_C10 <- gene_set_enrichment(exp_df2_annot2, "tumor_2_C10")
+```
+
+
+
+
+#### Visualization of gene set enrichment analysis using dotplot
+```{r fig.height=10, fig.width=10}
+# Create a Dotplot view for the C3 cluster of tumor #1
+require(DOSE)
+dotplot(gse_C3, showCategory=10, split=".sign") + facet_grid(.~.sign) + ggtitle("Tumor #1 Cluster #3")
+ggsave("Tumor_1_C3_Macrophages_dotplot_gse.png", dpi = 600, width = 10, height = 10, units = "in")
+```
+
+
+
+
+```{r fig.height=12, fig.width=10}
+# Create a Dotplot view for the C10 cluster of tumor #2
+dotplot(gse_C10, showCategory=10, split=".sign") + facet_grid(.~.sign) + ggtitle("Tumor #2 Cluster #10")
+ggsave("Tumor_2_C10_Macrophages_dotplot_gse.png", dpi = 600, width = 10, height = 12, units = "in")
+```
+
+
+
+#### Visualization of gene set enrichment analysis using Ridgeplot
+```{r fig.height=16, fig.width=11}
+# Ridgeplot view for the C3 cluster of tumor #1
+ridgeplot(gse_C3, showCategory = 20) + labs(x = "enrichment distribution") + ggtitle("Tumor #1 Cluster #3")
+ggsave("Tumor_1_C3_Macrophages_Ridgeplot_gse.png", dpi = 600, width = 11, height = 16, units = "in")
+```
+
+
+
+
+
+```{r fig.height=14, fig.width=11}
+# Ridgeplot view for the C10 cluster of tumor #2
+ridgeplot(gse_C10, showCategory = 20) + labs(x = "enrichment distribution") + ggtitle("Tumor #2 Cluster #10")
+ggsave("Tumor_2_C10_Macrophages_Ridgeplot_gse.png", dpi = 600, width = 11, height = 14, units = "in")
+```
+
+
+
+#### Use UMAP plot to visualize the selected differentially expressed genes in TAM clusters
+```{r fig.height=14.4, fig.width=5.2}
+# upregulated protein-coding genes in Tumor-associated macrophages: FMN1, PRKCB, PRKAG2, TMEM163, MERTK, CHST11, KCNMA1
+
+genes <- c("FMN1", "PRKCB", "PRKAG2", "MERTK", "CHST11", "KCNMA1")
+
+FeaturePlot(sobj2, reduction = "umap", features = genes, split.by = "Health", max.cutoff = 3, cols = c("grey", "red"))
+ggsave("TAM_activated_protein_UMAP_plots.png", width = 5.2, height = 14.4, units = "in", dpi =  600) 
+```
+
+
+
+```{r fig.height=14.4, fig.width=5.2}
+# downregulated protein-coding genes in Tumor-associated macrophages: HBB, FTH1, FABP4, S100A4, CRIP1, SFTPC, MARCO
+
+genes <- c("HBB", "FTH1", "FABP4", "S100A4", "CRIP1", "SFTPC")
+
+FeaturePlot(sobj2, reduction = "umap", features = genes, split.by = "Health", max.cutoff = 3, cols = c("grey", "blue"))
+ggsave("TAM_suppressed_protein_UMAP_plots.png", width = 5.2, height = 14.4, units = "in", dpi =  600) 
+```
+
+
+
+```{r fig.height=2.5, fig.width=5.2}
+# Activated lncRNA in TAMs: PVT1
+genes <- "PVT1"
+FeaturePlot(sobj2, reduction = "umap", features = genes, split.by = "Health", max.cutoff = 3, cols = c("grey", "red"))
+ggsave("TAM_Activated_lncRNA_UMAP_plots.png", width = 5.2, height = 2.5, units = "in", dpi =  600) 
+```
+
+
+```{r fig.height=7.5, fig.width=5.2}
+# Suppressed lncRNA in TAMs: AC092691.1, AC073332.1, AC096564.1
+genes <- c("AC092691.1", "AC073332.1", "AC096564.1")
+
+FeaturePlot(sobj2, reduction = "umap", features = genes, split.by = "Health", max.cutoff = 3, cols = c("grey", "blue"))
+ggsave("TAM_Suppressed_lncRNA_UMAP_plots.png", width = 5.2, height = 7.5, units = "in", dpi =  600) 
+```
+
+
+
+#### Use DoHeatmap() from Seurat to visualize macrophage marker gene expression in normal and tumor-associated macrophages at the single-nucleus level
+The heatmap data are grouped by sample IDs
+```{r fig.height=5, fig.width=10}
+macro_genes <- c("CD163", "CD68", "CLEC7A", "CSF1R", "FCGR3A", "MARCO", "MERTK", "MRC1", "MSR1", "PPARG")
+cell_clusters <- c("C3", "C8", "C10")
+
+sobj2 %>% subset(idents = cell_clusters) %>% DoHeatmap(features = macro_genes, group.by = "orig.ident", angle = 30, size = 4.5)
+ggsave("Macrophages_markers_heatmap.png", units = "in", height = 5, width = 10)
+```
+
+
+
+```{r fig.height=6, fig.width=10}
+deg_genes <- c("FMN1", "PRKCB", "PRKAG2", "MERTK", "CHST11", "KCNMA1", "PVT1", "HBB", "FTH1", "FABP4", "S100A4", "CRIP1",
+               "AC092691.1", "AC073332.1", "AC096564.1")
+cell_clusters <- c("C3", "C6", "C8", "C10", "C11", "C13", "C14")
+
+sobj2 %>% subset(idents = cell_clusters) %>% DoHeatmap(features = deg_genes)
+```
+
+
+#### Use DoHeatmap() from Seurat to visualize differentially expressed genes in normal and tumor-associated macrophages at the single-nucleus level
+The heatmap data are grouped by sample IDs
+```{r fig.height=6, fig.width=10}
+deg_genes <- c("FMN1", "PRKCB", "PRKAG2", "MERTK", "CHST11", "KCNMA1", "PVT1", "FTH1", "FABP4", "S100A4", "CRIP1",
+               "AC092691.1", "AC073332.1", "AC096564.1")
+cell_clusters <- c("C3", "C8", "C10")
+
+sobj2 %>% subset(idents = cell_clusters) %>% DoHeatmap(features = deg_genes, group.by = "orig.ident", angle = 30)
+ggsave("Macrophages_DEG_heatmap.png", units = "in", height = 6, width = 10)
+```
+
+
+#### DotPlot Analysis of gene expression in different cell clusters
+```{r fig.height=5, fig.width=10}
+deg_genes <- c("FMN1", "PRKCB", "PRKAG2", "MERTK", "CHST11", "KCNMA1", "PVT1", "FTH1", "FABP4", "S100A4", "CRIP1",
+               "AC092691.1", "AC073332.1", "AC096564.1")
+cell_clusters <- c("C3", "C8", "C10")
+sobj2 %>% DotPlot(idents = cell_clusters, features = deg_genes, dot.scale = 10) + 
+          theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+```
+
+
+
+
+```{r fig.height=8, fig.width=6}
+cell_markers <- c("CLIC5", "ETV5", "ABCA3", "VWF", "FLT1", "CD163", "PPARG")
+
+sobj2 %>% DotPlot(features = cell_markers, dot.scale = 10, cols = c("lightgrey", "red")) + 
+          theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1))
+```
+
+
+#### Plot phylogenetic tree to display the relationships between different cell clusters
+```{r fig.height=7, fig.width=7}
+BuildClusterTree(sobj2, reduction = "pca", verbose = FALSE) %>% Tool(slot = "BuildClusterTree") %>% plot(cex = 1, hang = -1)
+```
+
+
+#### Display information about the current R session, including details about the R version, the operating system (OS), and attached or loaded packages
+
+```{r}
+sessionInfo()
+```
+
+
+
+
+
+
+
